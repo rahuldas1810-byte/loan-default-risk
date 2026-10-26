@@ -1,5 +1,6 @@
 from typing import Optional
-
+from pathlib import Path
+from fastapi.responses import FileResponse
 import pandas as pd
 from pydantic import BaseModel, Field
 
@@ -9,7 +10,8 @@ import shap
 from fastapi import FastAPI
 
 # Open the lunchbox 🍱
-bundle = joblib.load("../models/loan_model.joblib")
+BASE = Path(__file__).parent
+bundle = joblib.load(BASE.parent / "models" / "loan_model.joblib")
 model = bundle["model"]
 FORM_COLS = bundle["form_cols"]
 MEDIANS = bundle["medians"]
@@ -36,12 +38,12 @@ app = FastAPI(title="Loan Default Risk API")
 
 @app.get("/")
 def home():
-    return {
-        "status": "API is running ✅",
-        "threshold": THRESHOLD,
-        "review_threshold": REVIEW_THRESHOLD,
-        "inputs": FORM_COLS,
-    }
+    return FileResponse(BASE / "index.html")
+
+
+@app.get("/health")
+def health():
+    return {"status": "API is running ✅", "threshold": THRESHOLD}
 class Applicant(BaseModel):
     income: float = Field(gt=0)
     loan_amount: float = Field(gt=0)

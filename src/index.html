@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Loan Default Risk Scorer</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: system-ui, sans-serif; background: #f4f6fb; color: #1d2433; margin: 0; padding: 16px; }
+  .wrap { max-width: 760px; margin: 0 auto; }
+  h1 { margin: 8px 0 4px; font-size: 1.6rem; }
+  .sub { color: #5b6475; margin: 0 0 16px; }
+  .card { background: #fff; border-radius: 12px; padding: 18px; box-shadow: 0 1px 4px rgba(0,0,0,.08); margin-bottom: 16px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; }
+  label { font-size: .85rem; color: #5b6475; display: block; margin-bottom: 4px; }
+  input, select { width: 100%; padding: 9px; border: 1px solid #cfd5e1; border-radius: 8px; font-size: .95rem; }
+  button { margin-top: 16px; width: 100%; padding: 12px; border: 0; border-radius: 8px; background: #2f5bea; color: #fff; font-size: 1rem; cursor: pointer; }
+  button:disabled { background: #93a5e8; }
+  .score { font-size: 2.4rem; font-weight: 700; }
+  .badge { display: inline-block; padding: 4px 12px; border-radius: 999px; font-weight: 600; color: #fff; }
+  .APPROVE { background: #1f9d55; } .REVIEW { background: #d69e2e; } .REJECT { background: #e53e3e; }
+  .reason { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #eef0f5; }
+  .up { color: #e53e3e; } .down { color: #1f9d55; }
+  .note { font-size: .8rem; color: #7a8294; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🏦 Loan Default Risk Scorer</h1>
+  <p class="sub">LightGBM model trained on 246K Home Credit loan applications · explained with SHAP</p>
+
+  <form id="f" class="card">
+    <div class="grid">
+      <div><label>Yearly income (₹)</label><input name="income" type="number" value="270000" required></div>
+      <div><label>Loan amount (₹)</label><input name="loan_amount" type="number" value="600000" required></div>
+      <div><label>Yearly EMI (₹)</label><input name="yearly_emi" type="number" value="30000" required></div>
+      <div><label>Price of item being bought (₹)</label><input name="goods_price" type="number" value="500000" required></div>
+      <div><label>Age (years)</label><input name="age_years" type="number" value="28" min="18" max="100" required></div>
+      <div><label>Years at current job (blank if not employed)</label><input name="years_employed" type="number" step="0.1" value="2"></div>
+      <div><label>Years since ID document issued</label><input name="years_since_id_issued" type="number" step="0.1" value="3" required></div>
+      <div><label>Years since registration changed</label><input name="years_since_registration_change" type="number" step="0.1" value="5" required></div>
+      <div><label>Days since phone number changed</label><input name="days_since_phone_change" type="number" value="200" required></div>
+      <div><label>Family members</label><input name="family_members" type="number" value="3" min="1" required></div>
+      <div><label>Credit score 1 (0–1, blank if unknown)</label><input name="credit_score_1" type="number" step="0.01" min="0" max="1" value="0.4"></div>
+      <div><label>Credit score 2 (0–1, blank if unknown)</label><input name="credit_score_2" type="number" step="0.01" min="0" max="1" value="0.5"></div>
+      <div><label>Credit score 3 (0–1, blank if unknown)</label><input name="credit_score_3" type="number" step="0.01" min="0" max="1" value="0.35"></div>
+      <div><label>Owns a car?</label><select name="owns_car"><option value="false">No</option><option value="true">Yes</option></select></div>
+      <div><label>Higher education?</label><select name="higher_education"><option value="false">No</option><option value="true">Yes</option></select></div>
+    </div>
+    <button id="btn" type="submit">Check risk</button>
+    <p class="note" id="wait"></p>
+  </form>
+
+  <div id="out" class="card" style="display:none"></div>
+
+  <p class="note">Educational demo. Thresholds are based on assumed costs, not a real lending policy.
+    <a href="https://github.com/rahuldas1810-byte/loan-default-risk">Source on GitHub</a></p>
+</div>
+
+<script>
+const optional = ["years_employed", "credit_score_1", "credit_score_2", "credit_score_3"];
+const form = document.getElementById("f");
+
+form.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const btn = document.getElementById("btn");
+  const wait = document.getElementById("wait");
+  const out = document.getElementById("out");
+  btn.disabled = true; btn.textContent = "Scoring...";
+  wait.textContent = "If the server was asleep, the first request can take up to a minute.";
+
+  const body = {};
+  for (const [k, v] of new FormData(form)) {
+    if (k === "owns_car" || k === "higher_education") body[k] = v === "true";
+    else if (v === "" && optional.includes(k)) body[k] = null;
+    else body[k] = Number(v);
+  }
+
+  try {
+    const res = await fetch("/predict", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(JSON.stringify(data.detail));
+
+    const rows = data.reasons.map(r => `
+      <div class="reason"><span>${r.factor}</span>
+      <span class="${r.effect === "increased risk" ? "up" : "down"}">
+        ${r.effect === "increased risk" ? "▲" : "▼"} ${r.effect}</span></div>`).join("");
+
+    out.innerHTML = `
+      <div class="score">${data.risk_score}%</div>
+      <p>Estimated chance of default · <span class="badge ${data.decision}">${data.decision}</span></p>
+      <h3>Top reasons</h3>${rows}`;
+    out.style.display = "block";
+  } catch (err) {
+    out.innerHTML = `<p class="up">Something went wrong: ${err.message}</p>`;
+    out.style.display = "block";
+  } finally {
+    btn.disabled = false; btn.textContent = "Check risk"; wait.textContent = "";
+  }
+});
+</script>
+</body>
+</html>
